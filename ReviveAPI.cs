@@ -277,6 +277,7 @@ namespace ReviveAPI
         /// <param name="pendingOnRevives">On revive actions that will invoke on timer.</param>
         public static void AddCustomRevive(CanReviveDelegate canReviveDelegate, PendingOnRevive[] pendingOnRevives)
         {
+            if (pendingOnRevives == null) pendingOnRevives = defaultPendingOnRevives;
             CustomRevive customRevive = new CustomRevive
             {
                 canRevive = canReviveDelegate,
@@ -292,6 +293,7 @@ namespace ReviveAPI
         /// <param name="pendingOnRevives">On revive actions that will invoke on timer.</param>
         public static void AddCustomRevive(CanReviveDelegate canReviveDelegate, OnReviveDelegate onReviveDelegate, PendingOnRevive[] pendingOnRevives)
         {
+            if (pendingOnRevives == null) pendingOnRevives = defaultPendingOnRevives;
             CustomRevive customRevive = new CustomRevive
             {
                 canRevive = canReviveDelegate,
