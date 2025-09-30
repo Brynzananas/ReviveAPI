@@ -1,20 +1,12 @@
 ﻿using BepInEx;
 using HarmonyLib;
-using Mono.Cecil;
 using Mono.Cecil.Cil;
 using MonoMod.Cil;
 using RoR2;
-using RoR2.Artifacts;
-using RoR2.Skills;
-using System;
 using System.Collections.Generic;
-using System.Runtime.CompilerServices;
 using System.Security;
 using System.Security.Permissions;
 using UnityEngine;
-using UnityEngine.AddressableAssets;
-using UnityEngine.Networking;
-using static VoidFiendCorruptAPI.ReviveAPI;
 
 [assembly: SecurityPermission(System.Security.Permissions.SecurityAction.RequestMinimum, SkipVerification = true)]
 [assembly: HG.Reflection.SearchableAttribute.OptIn]
@@ -22,7 +14,7 @@ using static VoidFiendCorruptAPI.ReviveAPI;
 [module: UnverifiableCode]
 #pragma warning disable CS0618
 #pragma warning restore CS0618
-namespace VoidFiendCorruptAPI
+namespace ReviveAPI
 {
     [BepInPlugin(ModGuid, ModName, ModVer)]
     [System.Serializable]
