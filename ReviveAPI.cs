@@ -246,6 +246,19 @@ namespace ReviveAPI
         /// Add custom revive
         /// </summary>
         /// <param name="canReviveDelegate">Revive condition.</param>
+        public static void AddCustomRevive(CanReviveDelegate canReviveDelegate)
+        {
+            CustomRevive customRevive = new CustomRevive
+            {
+                canRevive = canReviveDelegate,
+                pendingOnRevives = defaultPendingOnRevives
+            };
+            AddCustomRevive(customRevive);
+        }
+        /// <summary>
+        /// Add custom revive
+        /// </summary>
+        /// <param name="canReviveDelegate">Revive condition.</param>
         /// <param name="onReviveDelegate">On revive action.</param>
         public static void AddCustomRevive(CanReviveDelegate canReviveDelegate, OnReviveDelegate onReviveDelegate)
         {
@@ -254,6 +267,20 @@ namespace ReviveAPI
                 canRevive = canReviveDelegate,
                 onRevive = onReviveDelegate,
                 pendingOnRevives = defaultPendingOnRevives
+            };
+            AddCustomRevive(customRevive);
+        }
+        /// <summary>
+        /// Add custom revive
+        /// </summary>
+        /// <param name="canReviveDelegate">Revive condition.</param>
+        /// <param name="pendingOnRevives">On revive actions that will invoke on timer.</param>
+        public static void AddCustomRevive(CanReviveDelegate canReviveDelegate, PendingOnRevive[] pendingOnRevives)
+        {
+            CustomRevive customRevive = new CustomRevive
+            {
+                canRevive = canReviveDelegate,
+                pendingOnRevives = pendingOnRevives
             };
             AddCustomRevive(customRevive);
         }
