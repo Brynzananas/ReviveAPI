@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Security;
 using System.Security.Permissions;
 using UnityEngine;
+using static ReviveAPI.ReviveAPI;
 
 [assembly: SecurityPermission(System.Security.Permissions.SecurityAction.RequestMinimum, SkipVerification = true)]
 [assembly: HG.Reflection.SearchableAttribute.OptIn]
@@ -22,19 +23,67 @@ namespace ReviveAPI
     {
         public const string ModGuid = "com.brynzananas.reviveapi";
         public const string ModName = "Revive API";
-        public const string ModVer = "1.0.0";
+        public const string ModVer = "1.1.0";
         public delegate bool CanReviveDelegate(CharacterMaster characterMaster);
         public delegate void OnReviveDelegate(CharacterMaster characterMaster);
         public class CustomRevive
         {
             public CanReviveDelegate canRevive;
             public OnReviveDelegate onRevive;
+            public PendingOnRevive[] pendingOnRevives;
         }
+        public class PendingOnRevive
+        {
+            internal CharacterMaster characterMaster;
+            public float timer;
+            public OnReviveDelegate onReviveDelegate;
+        }
+        private static List<PendingOnRevive> pendingRevives = [];
         private static List<CustomRevive> customRevives = [];
         public void Awake()
         {
             SetHooks();
         }
+        public void FixedUpdate()
+        {
+            for (int i = 0; i < pendingRevives.Count; i++)
+            {
+                PendingOnRevive pendingRevive = pendingRevives[i];
+                pendingRevive.timer -= Time.fixedDeltaTime;
+                if (pendingRevive.timer <= 0f)
+                {
+                    pendingRevives.Remove(pendingRevive);
+                    if (pendingRevive.characterMaster) pendingRevive.onReviveDelegate?.Invoke(pendingRevive.characterMaster);
+                }
+            }
+        }
+        public static PendingOnRevive[] defaultPendingOnRevives
+        {
+            get
+            {
+                PendingOnRevive pendingSimpleRespawn = new PendingOnRevive
+                {
+                    timer = 2f,
+                    onReviveDelegate = SimpleRespawn
+                };
+                PendingOnRevive pendingSimpleRespawnSound = new PendingOnRevive
+                {
+                    timer = 2f,
+                    onReviveDelegate = SimpleRespawnSound
+                };
+                return [pendingSimpleRespawn, pendingSimpleRespawnSound];
+            }
+        }
+        public static void SimpleRespawn(CharacterMaster characterMaster)
+        {
+            Vector3 vector = characterMaster.deathFootPosition;
+            if (characterMaster.killedByUnsafeArea)
+            {
+                vector = TeleportHelper.FindSafeTeleportDestination(characterMaster.deathFootPosition, characterMaster.bodyPrefab.GetComponent<CharacterBody>(), RoR2Application.rng) ?? characterMaster.deathFootPosition;
+            }
+            characterMaster.Respawn(vector, Quaternion.Euler(0f, global::UnityEngine.Random.Range(0f, 360f), 0f), true);
+        }
+        public static void SimpleRespawnSound(CharacterMaster characterMaster) => characterMaster.PlayExtraLifeSFX();
         public void Destroy()
         {
             UnsetHooks();
@@ -173,6 +222,19 @@ namespace ReviveAPI
                 {
                     canRevive = !canRevive;
                     if (onRevive) customRevive.onRevive?.Invoke(characterMaster);
+                    if (customRevive.pendingOnRevives != null)
+                    {
+                        foreach (PendingOnRevive pendingOnRevive in customRevive.pendingOnRevives)
+                        {
+                            PendingOnRevive pendingOnRevive1 = new PendingOnRevive
+                            {
+                                timer = Mathf.Max(1f, pendingOnRevive.timer),
+                                characterMaster = characterMaster,
+                                onReviveDelegate = pendingOnRevive.onReviveDelegate
+                            };
+                            pendingRevives.Add(pendingOnRevive1);
+                        }
+                    }
                     break;
                 }
             }
@@ -190,7 +252,24 @@ namespace ReviveAPI
             CustomRevive customRevive = new CustomRevive
             {
                 canRevive = canReviveDelegate,
-                onRevive = onReviveDelegate
+                onRevive = onReviveDelegate,
+                pendingOnRevives = defaultPendingOnRevives
+            };
+            AddCustomRevive(customRevive);
+        }
+        /// <summary>
+        /// Add custom revive
+        /// </summary>
+        /// <param name="canReviveDelegate">Revive condition.</param>
+        /// <param name="onReviveDelegate">On revive action.</param>
+        /// <param name="pendingOnRevives">On revive actions that will invoke on timer.</param>
+        public static void AddCustomRevive(CanReviveDelegate canReviveDelegate, OnReviveDelegate onReviveDelegate, PendingOnRevive[] pendingOnRevives)
+        {
+            CustomRevive customRevive = new CustomRevive
+            {
+                canRevive = canReviveDelegate,
+                onRevive = onReviveDelegate,
+                pendingOnRevives = pendingOnRevives
             };
             AddCustomRevive(customRevive);
         }
