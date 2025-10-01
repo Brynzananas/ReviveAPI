@@ -3,7 +3,9 @@ using HarmonyLib;
 using Mono.Cecil.Cil;
 using MonoMod.Cil;
 using RoR2;
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Security;
 using System.Security.Permissions;
 using UnityEngine;
@@ -31,6 +33,7 @@ namespace ReviveAPI
             public CanReviveDelegate canRevive;
             public OnReviveDelegate onRevive;
             public PendingOnRevive[] pendingOnRevives;
+            public int priority;
         }
         public class PendingOnRevive
         {
@@ -38,8 +41,8 @@ namespace ReviveAPI
             public float timer;
             public OnReviveDelegate onReviveDelegate;
         }
-        private static List<PendingOnRevive> pendingRevives = [];
-        private static List<CustomRevive> customRevives = [];
+        private static List<PendingOnRevive> pendingRevives = new List<PendingOnRevive>();
+        private static List<CustomRevive> customRevives = new List<CustomRevive>();
         public void Awake()
         {
             SetHooks();
@@ -71,7 +74,7 @@ namespace ReviveAPI
                     timer = 2f,
                     onReviveDelegate = SimpleRespawnSound
                 };
-                return [pendingSimpleRespawn, pendingSimpleRespawnSound];
+                return new PendingOnRevive[] { pendingSimpleRespawn, pendingSimpleRespawnSound };
             }
         }
         public static void SimpleRespawn(CharacterMaster characterMaster)
@@ -88,130 +91,274 @@ namespace ReviveAPI
         {
             UnsetHooks();
         }
+
         #region Hooks
+
         private bool hooksSet;
+
         private void SetHooks()
         {
             if (hooksSet) return;
-            IL.RoR2.Artifacts.TeamDeathArtifactManager.OnServerCharacterDeathGlobal += ILHook1;
-            IL.RoR2.Artifacts.DoppelgangerInvasionManager.OnCharacterDeathGlobal += ILHook3;
-            IL.RoR2.CharacterMaster.IsDeadAndOutOfLivesServer += ILHook2;
-            IL.RoR2.CharacterMaster.OnBodyDeath += ILHook4;
+            IL.RoR2.Artifacts.TeamDeathArtifactManager.OnServerCharacterDeathGlobal += TeamDeathArtifactManager_OnServerCharacterDeathGlobal;
+            IL.RoR2.Artifacts.DoppelgangerInvasionManager.OnCharacterDeathGlobal += DoppelgangerInvasionManager_OnCharacterDeathGlobal;
+            IL.RoR2.CharacterMaster.IsDeadAndOutOfLivesServer += CharacterMaster_IsDeadAndOutOfLivesServer;
+            IL.RoR2.CharacterMaster.OnBodyDeath += CharacterMaster_OnBodyDeath;
             hooksSet = true;
         }
+
         private void UnsetHooks()
         {
             if (!hooksSet) return;
-            IL.RoR2.Artifacts.TeamDeathArtifactManager.OnServerCharacterDeathGlobal -= ILHook1;
-            IL.RoR2.Artifacts.DoppelgangerInvasionManager.OnCharacterDeathGlobal -= ILHook3;
-            IL.RoR2.CharacterMaster.IsDeadAndOutOfLivesServer -= ILHook2;
-            IL.RoR2.CharacterMaster.OnBodyDeath -= ILHook4;
+            IL.RoR2.Artifacts.TeamDeathArtifactManager.OnServerCharacterDeathGlobal -= TeamDeathArtifactManager_OnServerCharacterDeathGlobal;
+            IL.RoR2.Artifacts.DoppelgangerInvasionManager.OnCharacterDeathGlobal -= DoppelgangerInvasionManager_OnCharacterDeathGlobal;
+            IL.RoR2.CharacterMaster.IsDeadAndOutOfLivesServer -= CharacterMaster_IsDeadAndOutOfLivesServer;
+            IL.RoR2.CharacterMaster.OnBodyDeath -= CharacterMaster_OnBodyDeath;
             hooksSet = false;
         }
-        private void ILHook1(ILContext iLContext)
+
+        private void TeamDeathArtifactManager_OnServerCharacterDeathGlobal(ILContext iLContext)
         {
             ILCursor c = new ILCursor(iLContext);
-            ILLabel iLLabel = null;
-            if (c.TryGotoNext(MoveType.After,
-                    x => x.MatchLdsfld(typeof(RoR2Content.Items), nameof(RoR2Content.Items.ExtraLife)),
-                    x => x.MatchCallvirt<Inventory>(nameof(Inventory.GetItemCount)),
-                    x => x.MatchLdcI4(0),
-                    x => x.MatchBgt(out iLLabel)
-                ))
+            ILLabel beforeCheck = null;
+            if(c.TryGotoNext(MoveType.After,
+                x => x.MatchLdarg(0),
+                x => x.MatchLdfld(typeof(RoR2.DamageReport), nameof(DamageReport.victimMaster)),
+                x => x.MatchCallvirt<CharacterMaster>("get_playerCharacterMasterController"),
+                x => x.MatchCall<UnityEngine.Object>("op_Implicit"),
+                x => x.MatchBrfalse(out beforeCheck)))
             {
                 c.Emit(OpCodes.Ldarg_0);
                 c.Emit(OpCodes.Ldfld, AccessTools.Field(typeof(DamageReport), nameof(DamageReport.victimMaster)));
-                c.Emit(OpCodes.Ldc_I4_0);
-                c.Emit(OpCodes.Ldc_I4_0);
-                c.EmitDelegate(CanRevive);
-                c.Emit(OpCodes.Brtrue_S, iLLabel);
+                c.EmitDelegate(CanReviveBeforeVanilla);
+                c.Emit(OpCodes.Brfalse_S, beforeCheck);
             }
             else
             {
-                Logger.LogError(iLContext.Method.Name + " IL Hook failed!");
+                Logger.LogError(iLContext.Method.Name + " before IL Hook failed!");
             }
-        }
-        private void ILHook2(ILContext iLContext)
-        {
-            ILCursor c = new ILCursor(iLContext);
-            ILLabel iLLabel = null;
+
+            Logger.LogInfo(iLContext);
+
+            c = new ILCursor(iLContext);
+            ILLabel afterCheck = null;
             if (c.TryGotoNext(MoveType.After,
-                    x => x.MatchLdsfld(typeof(RoR2Content.Items), nameof(RoR2Content.Items.ExtraLife)),
-                    x => x.MatchCallvirt<Inventory>(nameof(Inventory.GetItemCount)),
-                    x => x.MatchLdcI4(0),
-                    x => x.MatchBgt(out iLLabel)
-                ))
+                    x => x.MatchLdarg(0),
+                    x => x.MatchLdfld(typeof(RoR2.DamageReport), nameof(DamageReport.victimMaster)),
+                    x => x.MatchLdfld(typeof(RoR2.CharacterMaster), nameof(CharacterMaster.seekerSelfRevive)),
+                    x => x.MatchBrfalse(out afterCheck)))
             {
                 c.Emit(OpCodes.Ldarg_0);
-                c.Emit(OpCodes.Ldc_I4_1);
-                c.Emit(OpCodes.Ldc_I4_0);
-                c.EmitDelegate(CanRevive);
-                c.Emit(OpCodes.Brtrue_S, iLLabel);
+                c.Emit(OpCodes.Ldfld, AccessTools.Field(typeof(DamageReport), nameof(DamageReport.victimMaster)));
+                c.EmitDelegate(CanReviveAfterVanilla);
+                c.Emit(OpCodes.Brfalse_S, afterCheck);
             }
             else
             {
-                Logger.LogError(iLContext.Method.Name + " IL Hook failed!");
+                Logger.LogError(iLContext.Method.Name + " after IL Hook failed!");
             }
         }
-        private void ILHook3(ILContext iLContext)
+
+        private void CharacterMaster_IsDeadAndOutOfLivesServer(ILContext iLContext)
         {
             ILCursor c = new ILCursor(iLContext);
             ILLabel iLLabel = null;
             if (c.TryGotoNext(MoveType.After,
-                    x => x.MatchLdsfld(typeof(RoR2Content.Items), nameof(RoR2Content.Items.ExtraLife)),
-                    x => x.MatchCallvirt<Inventory>(nameof(Inventory.GetItemCount)),
+                    x => x.MatchLdloc(out _),
+                    x => x.MatchCallvirt<RoR2.CharacterBody>("get_healthComponent"),
+                    x => x.MatchCallvirt<RoR2.HealthComponent>("get_alive"),
+                    x => x.MatchBrfalse(out iLLabel),
+                    x => x.MatchLdcI4(out _),
+                    x => x.MatchRet()))
+            {
+                var instruction = c.Emit(OpCodes.Ldloc_0).Prev;
+                c.EmitDelegate(CanReviveBeforeVanilla);
+                c.Emit(OpCodes.Brfalse_S, iLLabel);
+                c.Emit(OpCodes.Ldc_I4_0);
+                c.Emit(OpCodes.Ret);
+                iLLabel.Target = instruction;
+            }
+            else
+            {
+                Logger.LogError(iLContext.Method.Name + " before IL Hook failed!");
+            }
+
+            c = new ILCursor(iLContext);
+            ILLabel iLLabel2 = null;
+            if (c.TryGotoNext(MoveType.After,
+                    x => x.MatchLdarg(out _),
+                    x => x.MatchCall<CharacterMaster>("get_inventory"),
+                    x => x.MatchCallvirt<Inventory>("get_currentEquipmentIndex"),
+                    x => x.MatchLdsfld(typeof(RoR2.DLC2Content.Equipment), nameof(RoR2.DLC2Content.Equipment.HealAndRevive)),
+                    x => x.MatchCallvirt<EquipmentDef>("get_equipmentIndex"),
+                    x => x.MatchBeq(out iLLabel2)))
+            {
+                c.Emit(OpCodes.Ldarg_0);
+                c.EmitDelegate(CanReviveAfterVanilla);
+                c.Emit(OpCodes.Brfalse_S, iLLabel2);
+            } else
+            {
+                Logger.LogError(iLContext.Method.Name + " after IL Hook failed!");
+            }
+        }
+
+        private void DoppelgangerInvasionManager_OnCharacterDeathGlobal(ILContext iLContext)
+        {
+            ILCursor c = new ILCursor(iLContext);
+            ILLabel returnLabel = null;
+            if(c.TryGotoNext(MoveType.After, 
+                x => x.MatchLdloc(0),
+                x => x.MatchLdsfld(typeof(RoR2Content.Items), nameof(RoR2Content.Items.InvadingDoppelganger)),
+                x => x.MatchCallvirt<Inventory>(nameof(Inventory.GetItemCount)),
+                x => x.MatchLdcI4(0),
+                x => x.MatchBle(out returnLabel)
+                ))
+            {
+                c.Emit(OpCodes.Ldarg_1);
+                c.Emit(OpCodes.Ldfld, AccessTools.Field(typeof(DamageReport), nameof(DamageReport.victimMaster)));
+                c.EmitDelegate(CanReviveBeforeVanilla);
+                c.Emit(OpCodes.Brtrue_S, returnLabel);
+            } else
+            {
+                Logger.LogError(iLContext.Method.Name + " before IL Hook failed!");
+            }
+
+            c = new ILCursor(iLContext);
+            ILLabel iLLabel = null;
+            if (c.TryGotoNext(MoveType.After,
+                    x => x.MatchLdarg(1),
+                    x => x.MatchLdfld(typeof(RoR2.DamageReport), nameof(RoR2.DamageReport.victimBody)),
+                    x => x.MatchLdsfld(typeof(RoR2.DLC2Content.Buffs), nameof(RoR2.DLC2Content.Buffs.ExtraLifeBuff)),
+                    x => x.MatchCallvirt<RoR2.CharacterBody>(nameof(RoR2.CharacterBody.HasBuff)),
                     x => x.MatchBrtrue(out iLLabel)
                 ))
             {
-                c.Emit(OpCodes.Ldloc_0);
-                c.Emit(OpCodes.Ldc_I4_1);
-                c.Emit(OpCodes.Ldc_I4_0);
-                c.EmitDelegate(CanRevive);
+                c.Emit(OpCodes.Ldarg_1);
+                c.Emit(OpCodes.Ldfld, AccessTools.Field(typeof(DamageReport), nameof(DamageReport.victimMaster)));
+                c.EmitDelegate(CanReviveAfterVanilla);
                 c.Emit(OpCodes.Brtrue_S, iLLabel);
             }
             else
             {
-                Logger.LogError(iLContext.Method.Name + " IL Hook failed!");
+                Logger.LogError(iLContext.Method.Name + " after IL Hook failed!");
             }
         }
-        private void ILHook4(ILContext iLContext)
+
+        private void CharacterMaster_OnBodyDeath(ILContext iLContext)
         {
             ILCursor c = new ILCursor(iLContext);
-            ILLabel iLLabel = null;
-            ILLabel iLLabel2 = null;
+            ILLabel afterRevivesCheck = null;
             if (c.TryGotoNext(MoveType.After,
-                    x => x.MatchLdsfld(typeof(DLC1Content.Items), nameof(DLC1Content.Items.ExtraLifeVoid)),
-                    x => x.MatchCallvirt<Inventory>(nameof(Inventory.GetItemCount)),
-                    x => x.MatchLdcI4(0),
-                    x => x.MatchBle(out iLLabel)
-                ))
-            {
-                if (c.TryGotoNext(MoveType.After,
                     x => x.MatchLdarg(0),
-                    x => x.MatchLdstr(out _),
+                    x => x.MatchLdstr("PlayExtraLifeVoidSFX"),
                     x => x.MatchLdcR4(1f),
                     x => x.MatchCall<MonoBehaviour>(nameof(MonoBehaviour.Invoke)),
-                    x => x.MatchBr(out iLLabel2)
+                    x => x.MatchBr(out afterRevivesCheck)
                 ))
-                {
-                    c.GotoLabel(iLLabel, MoveType.Before);
-                    Instruction instruction = c.Emit(OpCodes.Ldarg_0).Prev;
-                    iLLabel.Target = instruction;
-                    c.Emit(OpCodes.Ldc_I4_0);
-                    c.Emit(OpCodes.Ldc_I4_1);
-                    c.EmitDelegate(CanRevive);
-                    c.Emit(OpCodes.Brtrue_S, iLLabel2);
-                }
-                else
-                {
-                    Logger.LogError(iLContext.Method.Name + " IL Hook 2 failed!");
-                }
+            {
+
             }
             else
             {
-                Logger.LogError(iLContext.Method.Name + " IL Hook 1 failed!");
+                Logger.LogError(iLContext.Method.Name + " else IL Hook failed!");
+            }
+
+            c = new ILCursor(iLContext);
+            if (c.TryGotoNext(MoveType.After,
+                x => x.MatchLdarg(0),
+                x => x.MatchCall<RoR2.CharacterMaster>("get_playerCharacterMasterController"),
+                x => x.MatchCallvirt<RoR2.PlayerCharacterMasterController>(nameof(RoR2.PlayerCharacterMasterController.OnBodyDeath))))
+            {
+                c.Emit(OpCodes.Ldarg_0);
+                c.EmitDelegate(ReviveBeforeVanilla);
+                c.Emit(OpCodes.Brtrue, afterRevivesCheck);
+            }
+            else
+            {
+                Logger.LogError(iLContext.Method.Name + " before IL Hook failed!");
+            }
+
+            c = new ILCursor(iLContext);
+            ILLabel afterExtraLifeVoid = null;
+            if (c.TryGotoNext(MoveType.After,
+                x => x.MatchLdsfld(typeof(DLC1Content.Items), nameof(DLC1Content.Items.ExtraLifeVoid)),
+                x => x.MatchCallvirt<Inventory>(nameof(Inventory.GetItemCount)),
+                x => x.MatchLdcI4(0),
+                x => x.MatchBle(out afterExtraLifeVoid)
+            ))
+            {
+                c.GotoLabel(afterRevivesCheck);
+                var target = c.Emit(OpCodes.Ldarg_0).Prev;
+                c.EmitDelegate(ReviveAfterVanilla);
+                c.Emit(OpCodes.Brfalse_S, afterExtraLifeVoid);
+
+                afterExtraLifeVoid.Target = target;
+            } else
+            {
+                Logger.LogError(iLContext.Method.Name + " after IL Hook failed!");
             }
         }
+
+        private static bool CanReviveBeforeVanilla(CharacterMaster characterMaster)
+        {
+            return CanRevive(characterMaster, customRevives.Where(item => item.priority > 0).ToArray());
+        }
+
+        private static bool CanReviveAfterVanilla(CharacterMaster characterMaster)
+        {
+            return CanRevive(characterMaster, customRevives.Where(item => item.priority <= 0).ToArray());
+        }
+
+        private static bool CanRevive(CharacterMaster characterMaster, CustomRevive[] customRevives)
+        {
+            foreach (CustomRevive customRevive in customRevives)
+            {
+                if (customRevive.canRevive == null) continue;
+                if (customRevive.canRevive.Invoke(characterMaster))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static bool ReviveBeforeVanilla(CharacterMaster characterMaster)
+        {
+            return Revive(characterMaster, customRevives.Where(item => item.priority > 0).ToArray());
+        }
+
+        private static bool ReviveAfterVanilla(CharacterMaster characterMaster)
+        {
+            return Revive(characterMaster, customRevives.Where(item => item.priority <= 0).ToArray());
+        }
+
+        private static bool Revive(CharacterMaster characterMaster, CustomRevive[] customRevives)
+        {
+            foreach (CustomRevive customRevive in customRevives)
+            {
+                if (customRevive.canRevive == null) continue;
+                if (customRevive.canRevive.Invoke(characterMaster))
+                {
+                    customRevive.onRevive?.Invoke(characterMaster);
+                    if (customRevive.pendingOnRevives != null)
+                    {
+                        foreach (PendingOnRevive pendingOnRevive in customRevive.pendingOnRevives)
+                        {
+                            PendingOnRevive pendingOnRevive1 = new PendingOnRevive
+                            {
+                                timer = Mathf.Max(1f, pendingOnRevive.timer),
+                                characterMaster = characterMaster,
+                                onReviveDelegate = pendingOnRevive.onReviveDelegate
+                            };
+                            pendingRevives.Add(pendingOnRevive1);
+                        }
+                    }
+
+                    return true;
+                }
+            }
+            return false;
+        }
+
         private static bool CanRevive(CharacterMaster characterMaster, bool reverse, bool onRevive)
         {
             bool canRevive = reverse;
@@ -242,6 +389,79 @@ namespace ReviveAPI
             return canRevive;
         }
         #endregion
+
+        /// <summary>
+        /// Add custom revive
+        /// </summary>
+        /// <param name="canReviveDelegate">Revive condition.</param>
+        /// <param name="priority">Priority, values above zero run before vanilla, values below and equal to zero run after vanilla.</param>
+        public static void AddCustomRevive(CanReviveDelegate canReviveDelegate, int priority)
+        {
+            CustomRevive customRevive = new CustomRevive
+            {
+                canRevive = canReviveDelegate,
+                pendingOnRevives = defaultPendingOnRevives,
+                priority = priority
+            };
+            AddCustomRevive(customRevive);
+        }
+
+        /// <summary>
+        /// Add custom revive
+        /// </summary>
+        /// <param name="canReviveDelegate">Revive condition.</param>
+        /// <param name="onReviveDelegate">On revive action.</param>
+        /// <param name="priority">Priority, values above zero run before vanilla, values below and equal to zero run after vanilla.</param>
+        public static void AddCustomRevive(CanReviveDelegate canReviveDelegate, OnReviveDelegate onReviveDelegate, int priority)
+        {
+            CustomRevive customRevive = new CustomRevive
+            {
+                canRevive = canReviveDelegate,
+                onRevive = onReviveDelegate,
+                pendingOnRevives = defaultPendingOnRevives,
+                priority = priority
+            };
+            AddCustomRevive(customRevive);
+        }
+
+        /// <summary>
+        /// Add custom revive
+        /// </summary>
+        /// <param name="canReviveDelegate">Revive condition.</param>
+        /// <param name="pendingOnRevives">On revive actions that will invoke on timer.</param>
+        /// <param name="priority">Priority, values above zero run before vanilla, values below and equal to zero run after vanilla.</param>
+        public static void AddCustomRevive(CanReviveDelegate canReviveDelegate, PendingOnRevive[] pendingOnRevives, int priority)
+        {
+            if (pendingOnRevives == null) pendingOnRevives = defaultPendingOnRevives;
+            CustomRevive customRevive = new CustomRevive
+            {
+                canRevive = canReviveDelegate,
+                pendingOnRevives = pendingOnRevives,
+                priority = priority
+            };
+            AddCustomRevive(customRevive);
+        }
+
+        /// <summary>
+        /// Add custom revive
+        /// </summary>
+        /// <param name="canReviveDelegate">Revive condition.</param>
+        /// <param name="onReviveDelegate">On revive action.</param>
+        /// <param name="pendingOnRevives">On revive actions that will invoke on timer.</param>
+        /// <param name="priority">Priority, values above zero run before vanilla, values below and equal to zero run after vanilla.</param>
+        public static void AddCustomRevive(CanReviveDelegate canReviveDelegate, OnReviveDelegate onReviveDelegate, PendingOnRevive[] pendingOnRevives, int priority)
+        {
+            if (pendingOnRevives == null) pendingOnRevives = defaultPendingOnRevives;
+            CustomRevive customRevive = new CustomRevive
+            {
+                canRevive = canReviveDelegate,
+                onRevive = onReviveDelegate,
+                pendingOnRevives = pendingOnRevives,
+                priority = priority
+            };
+            AddCustomRevive(customRevive);
+        }
+
         /// <summary>
         /// Add custom revive
         /// </summary>
@@ -251,10 +471,12 @@ namespace ReviveAPI
             CustomRevive customRevive = new CustomRevive
             {
                 canRevive = canReviveDelegate,
-                pendingOnRevives = defaultPendingOnRevives
+                pendingOnRevives = defaultPendingOnRevives,
+                priority = -1
             };
             AddCustomRevive(customRevive);
         }
+
         /// <summary>
         /// Add custom revive
         /// </summary>
@@ -266,10 +488,12 @@ namespace ReviveAPI
             {
                 canRevive = canReviveDelegate,
                 onRevive = onReviveDelegate,
-                pendingOnRevives = defaultPendingOnRevives
+                pendingOnRevives = defaultPendingOnRevives,
+                priority = -1
             };
             AddCustomRevive(customRevive);
         }
+
         /// <summary>
         /// Add custom revive
         /// </summary>
@@ -281,10 +505,12 @@ namespace ReviveAPI
             CustomRevive customRevive = new CustomRevive
             {
                 canRevive = canReviveDelegate,
-                pendingOnRevives = pendingOnRevives
+                pendingOnRevives = pendingOnRevives,
+                priority = -1
             };
             AddCustomRevive(customRevive);
         }
+
         /// <summary>
         /// Add custom revive
         /// </summary>
@@ -298,10 +524,12 @@ namespace ReviveAPI
             {
                 canRevive = canReviveDelegate,
                 onRevive = onReviveDelegate,
-                pendingOnRevives = pendingOnRevives
+                pendingOnRevives = pendingOnRevives,
+                priority = -1
             };
             AddCustomRevive(customRevive);
         }
+
         /// <summary>
         /// Add custom revive
         /// </summary>
