@@ -1,7 +1,9 @@
 ﻿using BepInEx;
+using BepInEx.Logging;
 using HarmonyLib;
 using Mono.Cecil.Cil;
 using MonoMod.Cil;
+using MonoMod.Utils;
 using RoR2;
 using System;
 using System.Collections.Generic;
@@ -26,6 +28,9 @@ namespace ReviveAPI
         public const string ModGuid = "com.brynzananas.reviveapi";
         public const string ModName = "Revive API";
         public const string ModVer = "1.2.0";
+        public const bool ENABLE_TEST = false;
+        public static ManualLogSource ManualLogger;
+
         public delegate bool CanReviveDelegate(CharacterMaster characterMaster);
         public delegate void OnReviveDelegate(CharacterMaster characterMaster);
         public class CustomRevive
@@ -45,8 +50,15 @@ namespace ReviveAPI
         private static List<CustomRevive> customRevives = new List<CustomRevive>();
         public void Awake()
         {
+            ManualLogger = Logger;
             SetHooks();
+            if (ENABLE_TEST)
+            {
+                Logger.LogWarning("ReviveAPI TESTS ARE ENABLED!");
+                Tests.AddRevives();
+            }
         }
+
         public void FixedUpdate()
         {
             for (int i = 0; i < pendingRevives.Count; i++)
@@ -120,19 +132,20 @@ namespace ReviveAPI
         {
             ILCursor c = new ILCursor(iLContext);
             ILLabel afterTarget = null;
-            if(c.TryGotoNext(MoveType.After,
+            if (c.TryGotoNext(MoveType.After,
                 x => x.MatchLdsfld(typeof(RoR2.Artifacts.TeamDeathArtifactManager), nameof(RoR2.Artifacts.TeamDeathArtifactManager.forceSpectatePrefab))))
             {
                 afterTarget = c.DefineLabel();
                 afterTarget.Target = c.Prev;
-            } else
+            }
+            else
             {
                 Logger.LogError(iLContext.Method.Name + " finding forceSpectatePrefab label IL Hook failed!");
             }
 
             c = new ILCursor(iLContext);
             ILLabel beforeCheck = null;
-            if(c.TryGotoNext(MoveType.After,
+            if (c.TryGotoNext(MoveType.After,
                 x => x.MatchLdarg(0),
                 x => x.MatchLdfld(typeof(RoR2.DamageReport), nameof(DamageReport.victimMaster)),
                 x => x.MatchCallvirt<CharacterMaster>("get_playerCharacterMasterController"),
@@ -169,9 +182,6 @@ namespace ReviveAPI
             {
                 Logger.LogError(iLContext.Method.Name + " after IL Hook failed!");
             }
-
-            //Logger.LogInfo("TeamDeathArtifactManager_OnServerCharacterDeathGlobal");
-            //Logger.LogInfo(iLContext);
         }
 
         private void CharacterMaster_IsDeadAndOutOfLivesServer(ILContext iLContext)
@@ -188,7 +198,7 @@ namespace ReviveAPI
             {
                 var newLabel = c.DefineLabel();
                 newLabel.Target = iLLabel.Target;
-                var instruction = c.Emit(OpCodes.Ldloc_0).Prev;
+                var instruction = c.Emit(OpCodes.Ldarg_0).Prev;
                 c.EmitDelegate(CanReviveBeforeVanilla);
                 c.Emit(OpCodes.Brfalse_S, newLabel);
                 c.Emit(OpCodes.Ldc_I4_0);
@@ -212,14 +222,11 @@ namespace ReviveAPI
             {
                 c.Emit(OpCodes.Ldarg_0);
                 c.EmitDelegate(CanReviveAfterVanilla);
-                c.Emit(OpCodes.Brfalse_S, iLLabel2);
+                c.Emit(OpCodes.Brtrue_S, iLLabel2);
             } else
             {
                 Logger.LogError(iLContext.Method.Name + " after IL Hook failed!");
             }
-
-            //Logger.LogInfo("CharacterMaster_IsDeadAndOutOfLivesServer");
-            //Logger.LogInfo(iLContext);
         }
 
         private void DoppelgangerInvasionManager_OnCharacterDeathGlobal(ILContext iLContext)
@@ -265,8 +272,8 @@ namespace ReviveAPI
                 Logger.LogError(iLContext.Method.Name + " after IL Hook failed!");
             }
 
-            //Logger.LogInfo("DoppelgangerInvasionManager_OnCharacterDeathGlobal");
-            //Logger.LogInfo(iLContext);
+            iLContext.Method.RecalculateILOffsets();
+            Logger.LogInfo(iLContext);
         }
 
         private void CharacterMaster_OnBodyDeath(ILContext iLContext)
