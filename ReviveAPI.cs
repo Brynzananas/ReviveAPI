@@ -104,13 +104,6 @@ namespace ReviveAPI
             IL.RoR2.CharacterMaster.IsDeadAndOutOfLivesServer += CharacterMaster_IsDeadAndOutOfLivesServer;
             IL.RoR2.CharacterMaster.OnBodyDeath += CharacterMaster_OnBodyDeath;
             hooksSet = true;
-
-            IL.RoR2.CharacterMaster.OnBodyDeath += TestHookToSeeChanges;
-        }
-
-        private void TestHookToSeeChanges(ILContext il)
-        {
-            Logger.LogInfo(il);
         }
 
         private void UnsetHooks()
