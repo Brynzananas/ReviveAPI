@@ -115,8 +115,10 @@ namespace ReviveAPI
             IL.RoR2.Artifacts.DoppelgangerInvasionManager.OnCharacterDeathGlobal += DoppelgangerInvasionManager_OnCharacterDeathGlobal;
             IL.RoR2.CharacterMaster.IsDeadAndOutOfLivesServer += CharacterMaster_IsDeadAndOutOfLivesServer;
             IL.RoR2.CharacterMaster.OnBodyDeath += CharacterMaster_OnBodyDeath;
+            On.RoR2.CharacterMaster.IsExtraLifePendingServer += CharacterMaster_IsExtraLifePendingServer;
             hooksSet = true;
         }
+
 
         private void UnsetHooks()
         {
@@ -125,7 +127,18 @@ namespace ReviveAPI
             IL.RoR2.Artifacts.DoppelgangerInvasionManager.OnCharacterDeathGlobal -= DoppelgangerInvasionManager_OnCharacterDeathGlobal;
             IL.RoR2.CharacterMaster.IsDeadAndOutOfLivesServer -= CharacterMaster_IsDeadAndOutOfLivesServer;
             IL.RoR2.CharacterMaster.OnBodyDeath -= CharacterMaster_OnBodyDeath;
+            On.RoR2.CharacterMaster.IsExtraLifePendingServer -= CharacterMaster_IsExtraLifePendingServer;
             hooksSet = false;
+        }
+
+        private bool CharacterMaster_IsExtraLifePendingServer(On.RoR2.CharacterMaster.orig_IsExtraLifePendingServer orig, CharacterMaster self)
+        {
+            var result = orig(self);
+            if (!result)
+            {
+                result = pendingRevives.Where(x => x.characterMaster == self).ToArray().Length > 0;
+            }
+            return result;
         }
 
         private void TeamDeathArtifactManager_OnServerCharacterDeathGlobal(ILContext iLContext)
