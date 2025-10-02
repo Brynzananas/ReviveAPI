@@ -25,7 +25,7 @@ namespace ReviveAPI
     {
         public const string ModGuid = "com.brynzananas.reviveapi";
         public const string ModName = "Revive API";
-        public const string ModVer = "1.1.0";
+        public const string ModVer = "1.2.0";
         public delegate bool CanReviveDelegate(CharacterMaster characterMaster);
         public delegate void OnReviveDelegate(CharacterMaster characterMaster);
         public class CustomRevive
@@ -104,6 +104,13 @@ namespace ReviveAPI
             IL.RoR2.CharacterMaster.IsDeadAndOutOfLivesServer += CharacterMaster_IsDeadAndOutOfLivesServer;
             IL.RoR2.CharacterMaster.OnBodyDeath += CharacterMaster_OnBodyDeath;
             hooksSet = true;
+
+            IL.RoR2.CharacterMaster.OnBodyDeath += TestHookToSeeChanges;
+        }
+
+        private void TestHookToSeeChanges(ILContext il)
+        {
+            Logger.LogInfo(il);
         }
 
         private void UnsetHooks()
@@ -119,6 +126,18 @@ namespace ReviveAPI
         private void TeamDeathArtifactManager_OnServerCharacterDeathGlobal(ILContext iLContext)
         {
             ILCursor c = new ILCursor(iLContext);
+            ILLabel afterTarget = null;
+            if(c.TryGotoNext(MoveType.After,
+                x => x.MatchLdsfld(typeof(RoR2.Artifacts.TeamDeathArtifactManager), nameof(RoR2.Artifacts.TeamDeathArtifactManager.forceSpectatePrefab))))
+            {
+                afterTarget = c.DefineLabel();
+                afterTarget.Target = c.Prev;
+            } else
+            {
+                Logger.LogError(iLContext.Method.Name + " finding forceSpectatePrefab label IL Hook failed!");
+            }
+
+            c = new ILCursor(iLContext);
             ILLabel beforeCheck = null;
             if(c.TryGotoNext(MoveType.After,
                 x => x.MatchLdarg(0),
@@ -130,14 +149,12 @@ namespace ReviveAPI
                 c.Emit(OpCodes.Ldarg_0);
                 c.Emit(OpCodes.Ldfld, AccessTools.Field(typeof(DamageReport), nameof(DamageReport.victimMaster)));
                 c.EmitDelegate(CanReviveBeforeVanilla);
-                c.Emit(OpCodes.Brfalse_S, beforeCheck);
+                c.Emit(OpCodes.Brtrue_S, beforeCheck);
             }
             else
             {
                 Logger.LogError(iLContext.Method.Name + " before IL Hook failed!");
             }
-
-            Logger.LogInfo(iLContext);
 
             c = new ILCursor(iLContext);
             ILLabel afterCheck = null;
@@ -145,17 +162,23 @@ namespace ReviveAPI
                     x => x.MatchLdarg(0),
                     x => x.MatchLdfld(typeof(RoR2.DamageReport), nameof(DamageReport.victimMaster)),
                     x => x.MatchLdfld(typeof(RoR2.CharacterMaster), nameof(CharacterMaster.seekerSelfRevive)),
-                    x => x.MatchBrfalse(out afterCheck)))
+                    x => x.MatchBrfalse(out afterCheck),
+                    x => x.MatchRet()))
             {
-                c.Emit(OpCodes.Ldarg_0);
+                var instruction = c.Emit(OpCodes.Ldarg_0).Prev;
                 c.Emit(OpCodes.Ldfld, AccessTools.Field(typeof(DamageReport), nameof(DamageReport.victimMaster)));
                 c.EmitDelegate(CanReviveAfterVanilla);
-                c.Emit(OpCodes.Brfalse_S, afterCheck);
+                c.Emit(OpCodes.Brfalse_S, afterTarget);
+                afterCheck.Target = instruction;
+                c.Emit(OpCodes.Ret);
             }
             else
             {
                 Logger.LogError(iLContext.Method.Name + " after IL Hook failed!");
             }
+
+            //Logger.LogInfo("TeamDeathArtifactManager_OnServerCharacterDeathGlobal");
+            //Logger.LogInfo(iLContext);
         }
 
         private void CharacterMaster_IsDeadAndOutOfLivesServer(ILContext iLContext)
@@ -170,9 +193,11 @@ namespace ReviveAPI
                     x => x.MatchLdcI4(out _),
                     x => x.MatchRet()))
             {
+                var newLabel = c.DefineLabel();
+                newLabel.Target = iLLabel.Target;
                 var instruction = c.Emit(OpCodes.Ldloc_0).Prev;
                 c.EmitDelegate(CanReviveBeforeVanilla);
-                c.Emit(OpCodes.Brfalse_S, iLLabel);
+                c.Emit(OpCodes.Brfalse_S, newLabel);
                 c.Emit(OpCodes.Ldc_I4_0);
                 c.Emit(OpCodes.Ret);
                 iLLabel.Target = instruction;
@@ -199,6 +224,9 @@ namespace ReviveAPI
             {
                 Logger.LogError(iLContext.Method.Name + " after IL Hook failed!");
             }
+
+            //Logger.LogInfo("CharacterMaster_IsDeadAndOutOfLivesServer");
+            //Logger.LogInfo(iLContext);
         }
 
         private void DoppelgangerInvasionManager_OnCharacterDeathGlobal(ILContext iLContext)
@@ -227,10 +255,12 @@ namespace ReviveAPI
             if (c.TryGotoNext(MoveType.After,
                     x => x.MatchLdarg(1),
                     x => x.MatchLdfld(typeof(RoR2.DamageReport), nameof(RoR2.DamageReport.victimBody)),
-                    x => x.MatchLdsfld(typeof(RoR2.DLC2Content.Buffs), nameof(RoR2.DLC2Content.Buffs.ExtraLifeBuff)),
-                    x => x.MatchCallvirt<RoR2.CharacterBody>(nameof(RoR2.CharacterBody.HasBuff)),
-                    x => x.MatchBrtrue(out iLLabel)
-                ))
+                    x => x.MatchCallvirt<CharacterBody>("get_equipmentSlot"),
+                    x => x.MatchCallvirt<EquipmentSlot>("get_equipmentIndex"),
+                    x => x.MatchLdsfld(typeof(RoR2.DLC2Content.Equipment), nameof(RoR2.DLC2Content.Equipment.HealAndRevive)),
+                    x => x.MatchCallvirt<RoR2.EquipmentDef>("get_equipmentIndex"),
+                    x => x.MatchBeq(out iLLabel)
+                    ))
             {
                 c.Emit(OpCodes.Ldarg_1);
                 c.Emit(OpCodes.Ldfld, AccessTools.Field(typeof(DamageReport), nameof(DamageReport.victimMaster)));
@@ -241,60 +271,99 @@ namespace ReviveAPI
             {
                 Logger.LogError(iLContext.Method.Name + " after IL Hook failed!");
             }
+
+            //Logger.LogInfo("DoppelgangerInvasionManager_OnCharacterDeathGlobal");
+            //Logger.LogInfo(iLContext);
         }
 
         private void CharacterMaster_OnBodyDeath(ILContext iLContext)
         {
+            // finding and marking whatever happens after vanilla revives are handled
             ILCursor c = new ILCursor(iLContext);
-            ILLabel afterRevivesCheck = null;
-            if (c.TryGotoNext(MoveType.After,
-                    x => x.MatchLdarg(0),
-                    x => x.MatchLdstr("PlayExtraLifeVoidSFX"),
-                    x => x.MatchLdcR4(1f),
-                    x => x.MatchCall<MonoBehaviour>(nameof(MonoBehaviour.Invoke)),
-                    x => x.MatchBr(out afterRevivesCheck)
-                ))
+            ILLabel afterVanillaRevivesLabel = null;
+            if (c.TryGotoNext(MoveType.Before,
+                x => x.MatchLdarg(0),
+                x => x.MatchLdloca(0),
+                x => x.MatchCall<UnityEngine.Component>(nameof(UnityEngine.Component.TryGetComponent)),
+                x => x.MatchBrfalse(out afterVanillaRevivesLabel)))
             {
-
-            }
-            else
+                afterVanillaRevivesLabel = c.DefineLabel();
+                afterVanillaRevivesLabel.Target = c.Next;
+            } else
             {
-                Logger.LogError(iLContext.Method.Name + " else IL Hook failed!");
+                Logger.LogError(iLContext.Method.Name + " finding label after vanilla revives IL Hook failed!");
             }
 
+            // adding pre vanilla revive handling
             c = new ILCursor(iLContext);
+            ILLabel reviveBeforeVanillaLabel = null;
             if (c.TryGotoNext(MoveType.After,
                 x => x.MatchLdarg(0),
                 x => x.MatchCall<RoR2.CharacterMaster>("get_playerCharacterMasterController"),
                 x => x.MatchCallvirt<RoR2.PlayerCharacterMasterController>(nameof(RoR2.PlayerCharacterMasterController.OnBodyDeath))))
             {
-                c.Emit(OpCodes.Ldarg_0);
+                reviveBeforeVanillaLabel = c.DefineLabel();
+                reviveBeforeVanillaLabel.Target = c.Emit(OpCodes.Ldarg_0).Prev;
                 c.EmitDelegate(ReviveBeforeVanilla);
-                c.Emit(OpCodes.Brtrue, afterRevivesCheck);
+                c.Emit(OpCodes.Brtrue, afterVanillaRevivesLabel);
             }
             else
             {
                 Logger.LogError(iLContext.Method.Name + " before IL Hook failed!");
             }
 
+            // redirecting playerCharacterMasterController to our pre vanilla revive handling
             c = new ILCursor(iLContext);
-            ILLabel afterExtraLifeVoid = null;
+            ILLabel playerCharacterMasterControllerLabel = null;
             if (c.TryGotoNext(MoveType.After,
-                x => x.MatchLdsfld(typeof(DLC1Content.Items), nameof(DLC1Content.Items.ExtraLifeVoid)),
-                x => x.MatchCallvirt<Inventory>(nameof(Inventory.GetItemCount)),
-                x => x.MatchLdcI4(0),
-                x => x.MatchBle(out afterExtraLifeVoid)
-            ))
+                x => x.MatchLdarg(0),
+                x => x.MatchCall<RoR2.CharacterMaster>("get_playerCharacterMasterController"),
+                x => x.MatchCall<UnityEngine.Object>("op_Implicit"),
+                x => x.MatchBrfalse(out playerCharacterMasterControllerLabel)))
             {
-                c.GotoLabel(afterRevivesCheck);
-                var target = c.Emit(OpCodes.Ldarg_0).Prev;
-                c.EmitDelegate(ReviveAfterVanilla);
-                c.Emit(OpCodes.Brfalse_S, afterExtraLifeVoid);
-
-                afterExtraLifeVoid.Target = target;
+                playerCharacterMasterControllerLabel.Target = reviveBeforeVanillaLabel.Target;
             } else
             {
+                Logger.LogError(iLContext.Method.Name + " redirecting playerCharacterMasterController IL Hook failed!");
+            }
+
+            // adding post vanilla revive handling
+            c = new ILCursor(iLContext);
+            ILLabel afterRevivesCheck = null;
+            if (c.TryGotoNext(MoveType.After,
+                    x => x.MatchLdarg(0),
+                    x => x.MatchLdstr("PlayExtraLifeVoidSFX"),
+                    x => x.MatchLdcR4(1f),
+                    x => x.MatchCall<MonoBehaviour>(nameof(MonoBehaviour.Invoke)),
+                    x => x.MatchBr(out _)
+                ))
+            {
+                afterRevivesCheck = c.DefineLabel();
+                afterRevivesCheck.Target = c.Emit(OpCodes.Ldarg_0).Prev;
+                c.EmitDelegate(ReviveAfterVanilla);
+                c.Emit(OpCodes.Brtrue_S, afterVanillaRevivesLabel);
+            }
+            else
+            {
                 Logger.LogError(iLContext.Method.Name + " after IL Hook failed!");
+            }
+
+            // replacing void extra life jump to our post vanilla revive handling
+            c = new ILCursor(iLContext);
+            ILLabel currentvoidbearTarget = null;
+            if (c.TryGotoNext(MoveType.After,
+                    x => x.MatchLdarg(0),
+                    x => x.MatchCall<RoR2.CharacterMaster>("get_inventory"),
+                    x => x.MatchLdsfld(typeof(RoR2.DLC1Content.Items), nameof(RoR2.DLC1Content.Items.ExtraLifeVoid)),
+                    x => x.MatchCallvirt<RoR2.Inventory>(nameof(RoR2.Inventory.GetItemCount)),
+                    x => x.MatchLdcI4(0),
+                    x => x.MatchBle(out currentvoidbearTarget)
+                    ))
+            {
+                currentvoidbearTarget.Target = afterRevivesCheck.Target;
+            } else
+            {
+                Logger.LogError(iLContext.Method.Name + " replacing void bear target IL Hook failed!");
             }
         }
 
@@ -537,6 +606,7 @@ namespace ReviveAPI
         public static void AddCustomRevive(CustomRevive customRevive)
         {
             customRevives.Add(customRevive);
+            customRevives = customRevives.OrderByDescending(x => x.priority).ToList();
         }
         
     }
