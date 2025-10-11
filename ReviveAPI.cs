@@ -27,7 +27,7 @@ namespace ReviveAPI
     {
         public const string ModGuid = "com.brynzananas.reviveapi";
         public const string ModName = "Revive API";
-        public const string ModVer = "1.2.0";
+        public const string ModVer = "1.2.1";
         public const bool ENABLE_TEST = false;
         public static ManualLogSource ManualLogger;
 
@@ -202,43 +202,21 @@ namespace ReviveAPI
             ILCursor c = new ILCursor(iLContext);
             ILLabel iLLabel = null;
             if (c.TryGotoNext(MoveType.After,
-                    x => x.MatchLdloc(out _),
-                    x => x.MatchCallvirt<RoR2.CharacterBody>("get_healthComponent"),
-                    x => x.MatchCallvirt<RoR2.HealthComponent>("get_alive"),
-                    x => x.MatchBrfalse(out iLLabel),
-                    x => x.MatchLdcI4(out _),
-                    x => x.MatchRet()))
+                    x => x.MatchLdsfld(typeof(RoR2Content.Items), nameof(RoR2Content.Items.ExtraLife)),
+                    x => x.MatchCallvirt<Inventory>(nameof(Inventory.GetItemCount)),
+                    x => x.MatchLdcI4(0),
+                    x => x.MatchBgt(out iLLabel)
+                ))
             {
-                var newLabel = c.DefineLabel();
-                newLabel.Target = iLLabel.Target;
-                var instruction = c.Emit(OpCodes.Ldarg_0).Prev;
-                c.EmitDelegate(CanReviveBeforeVanilla);
-                c.Emit(OpCodes.Brfalse_S, newLabel);
+                c.Emit(OpCodes.Ldarg_0);
                 c.Emit(OpCodes.Ldc_I4_0);
-                c.Emit(OpCodes.Ret);
-                iLLabel.Target = instruction;
+                c.Emit(OpCodes.Ldc_I4_0);
+                c.EmitDelegate(CanReviveAndOrRevive);
+                c.Emit(OpCodes.Brtrue_S, iLLabel);
             }
             else
             {
-                Logger.LogError(iLContext.Method.Name + " before IL Hook failed!");
-            }
-
-            c = new ILCursor(iLContext);
-            ILLabel iLLabel2 = null;
-            if (c.TryGotoNext(MoveType.After,
-                    x => x.MatchLdarg(out _),
-                    x => x.MatchCall<CharacterMaster>("get_inventory"),
-                    x => x.MatchCallvirt<Inventory>("get_currentEquipmentIndex"),
-                    x => x.MatchLdsfld(typeof(RoR2.DLC2Content.Equipment), nameof(RoR2.DLC2Content.Equipment.HealAndRevive)),
-                    x => x.MatchCallvirt<EquipmentDef>("get_equipmentIndex"),
-                    x => x.MatchBeq(out iLLabel2)))
-            {
-                c.Emit(OpCodes.Ldarg_0);
-                c.EmitDelegate(CanReviveAfterVanilla);
-                c.Emit(OpCodes.Brtrue_S, iLLabel2);
-            } else
-            {
-                Logger.LogError(iLContext.Method.Name + " after IL Hook failed!");
+                Logger.LogError(iLContext.Method.Name + " IL Hook failed!");
             }
         }
 
@@ -441,7 +419,7 @@ namespace ReviveAPI
             return false;
         }
 
-        private static bool CanRevive(CharacterMaster characterMaster, bool reverse, bool onRevive)
+        private static bool CanReviveAndOrRevive(CharacterMaster characterMaster, bool reverse, bool onRevive)
         {
             bool canRevive = reverse;
             foreach (CustomRevive customRevive in customRevives)
@@ -450,18 +428,21 @@ namespace ReviveAPI
                 if (customRevive.canRevive.Invoke(characterMaster))
                 {
                     canRevive = !canRevive;
-                    if (onRevive) customRevive.onRevive?.Invoke(characterMaster);
-                    if (customRevive.pendingOnRevives != null)
+                    if (onRevive)
                     {
-                        foreach (PendingOnRevive pendingOnRevive in customRevive.pendingOnRevives)
+                        customRevive.onRevive?.Invoke(characterMaster);
+                        if (customRevive.pendingOnRevives != null)
                         {
-                            PendingOnRevive pendingOnRevive1 = new PendingOnRevive
+                            foreach (PendingOnRevive pendingOnRevive in customRevive.pendingOnRevives)
                             {
-                                timer = Mathf.Max(1f, pendingOnRevive.timer),
-                                characterMaster = characterMaster,
-                                onReviveDelegate = pendingOnRevive.onReviveDelegate
-                            };
-                            pendingRevives.Add(pendingOnRevive1);
+                                PendingOnRevive pendingOnRevive1 = new PendingOnRevive
+                                {
+                                    timer = Mathf.Max(1f, pendingOnRevive.timer),
+                                    characterMaster = characterMaster,
+                                    onReviveDelegate = pendingOnRevive.onReviveDelegate
+                                };
+                                pendingRevives.Add(pendingOnRevive1);
+                            }
                         }
                     }
                     break;
