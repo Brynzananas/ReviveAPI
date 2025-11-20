@@ -27,7 +27,7 @@ namespace ReviveAPI
     {
         public const string ModGuid = "com.brynzananas.reviveapi";
         public const string ModName = "Revive API";
-        public const string ModVer = "1.2.1";
+        public const string ModVer = "1.2.2";
         public const bool ENABLE_TEST = false;
         public static ManualLogSource ManualLogger;
 
@@ -151,7 +151,7 @@ namespace ReviveAPI
                 afterTarget = c.DefineLabel();
                 afterTarget.Target = c.Prev;
             }
-            else
+            else 
             {
                 Logger.LogError(iLContext.Method.Name + " finding forceSpectatePrefab label IL Hook failed!");
             }
@@ -203,7 +203,7 @@ namespace ReviveAPI
             ILLabel iLLabel = null;
             if (c.TryGotoNext(MoveType.After,
                     x => x.MatchLdsfld(typeof(RoR2Content.Items), nameof(RoR2Content.Items.ExtraLife)),
-                    x => x.MatchCallvirt<Inventory>(nameof(Inventory.GetItemCount)),
+                    x => x.MatchCallvirt<Inventory>(nameof(Inventory.GetItemCountEffective)),
                     x => x.MatchLdcI4(0),
                     x => x.MatchBgt(out iLLabel)
                 ))
@@ -227,7 +227,7 @@ namespace ReviveAPI
             if(c.TryGotoNext(MoveType.After, 
                 x => x.MatchLdloc(0),
                 x => x.MatchLdsfld(typeof(RoR2Content.Items), nameof(RoR2Content.Items.InvadingDoppelganger)),
-                x => x.MatchCallvirt<Inventory>(nameof(Inventory.GetItemCount)),
+                x => x.MatchCallvirt<Inventory>(nameof(Inventory.GetItemCountEffective)),
                 x => x.MatchLdcI4(0),
                 x => x.MatchBle(out returnLabel)
                 ))
@@ -240,7 +240,6 @@ namespace ReviveAPI
             {
                 Logger.LogError(iLContext.Method.Name + " before IL Hook failed!");
             }
-
             c = new ILCursor(iLContext);
             ILLabel iLLabel = null;
             if (c.TryGotoNext(MoveType.After,
@@ -262,112 +261,77 @@ namespace ReviveAPI
             {
                 Logger.LogError(iLContext.Method.Name + " after IL Hook failed!");
             }
-
-            iLContext.Method.RecalculateILOffsets();
-            Logger.LogInfo(iLContext);
         }
 
         private void CharacterMaster_OnBodyDeath(ILContext iLContext)
         {
-            // finding and marking whatever happens after vanilla revives are handled
             ILCursor c = new ILCursor(iLContext);
-            ILLabel afterVanillaRevivesLabel = null;
+            Instruction instruction = null;
+            Instruction instruction2 = null;
+            ILLabel ilLabel = null;
             if (c.TryGotoNext(MoveType.Before,
                 x => x.MatchLdarg(0),
-                x => x.MatchLdloca(0),
+                x => x.MatchLdloca(out _),
                 x => x.MatchCall<UnityEngine.Component>(nameof(UnityEngine.Component.TryGetComponent)),
-                x => x.MatchBrfalse(out afterVanillaRevivesLabel)))
+                x => x.MatchBrfalse(out _)))
             {
-                afterVanillaRevivesLabel = c.DefineLabel();
-                afterVanillaRevivesLabel.Target = c.Next;
+                instruction = c.Next;
             } else
             {
-                Logger.LogError(iLContext.Method.Name + " finding label after vanilla revives IL Hook failed!");
+                Logger.LogError(iLContext.Method.Name + " IL hook 1 failed!");
             }
-
-            // adding pre vanilla revive handling
             c = new ILCursor(iLContext);
-            ILLabel reviveBeforeVanillaLabel = null;
-            if (c.TryGotoNext(MoveType.After,
-                x => x.MatchLdarg(0),
-                x => x.MatchCall<RoR2.CharacterMaster>("get_playerCharacterMasterController"),
-                x => x.MatchCallvirt<RoR2.PlayerCharacterMasterController>(nameof(RoR2.PlayerCharacterMasterController.OnBodyDeath))))
+            if (c.TryGotoNext(MoveType.Before,
+                x => x.MatchLdarg(1),
+                x => x.MatchLdsfld(typeof(DLC2Content.Buffs), nameof(DLC2Content.Buffs.ExtraLifeBuff)),
+                x => x.MatchCallvirt<CharacterBody>(nameof(CharacterBody.HasBuff)),
+                x => x.MatchBrfalse(out _)))
             {
-                reviveBeforeVanillaLabel = c.DefineLabel();
-                reviveBeforeVanillaLabel.Target = c.Emit(OpCodes.Ldarg_0).Prev;
-                c.EmitDelegate(ReviveBeforeVanilla);
-                c.Emit(OpCodes.Brtrue, afterVanillaRevivesLabel);
+                instruction2 = c.Next;
+                c.Emit(OpCodes.Ldarg_0);
+                c.EmitDelegate(CanReviveBeforeVanilla);
+                c.Emit(OpCodes.Brfalse_S, instruction2);
+                c.Emit(OpCodes.Ldarg_0);
+                c.EmitDelegate(ReviveBeforeVanilla);    
+                c.Emit(OpCodes.Brtrue_S, instruction);
             }
             else
             {
-                Logger.LogError(iLContext.Method.Name + " before IL Hook failed!");
+                Logger.LogError(iLContext.Method.Name + " IL hook 2 failed!");
             }
-
-            // redirecting playerCharacterMasterController to our pre vanilla revive handling
             c = new ILCursor(iLContext);
-            ILLabel playerCharacterMasterControllerLabel = null;
-            if (c.TryGotoNext(MoveType.After,
+            if (c.TryGotoNext(MoveType.Before,
+                x => x.MatchLdloca(5),
                 x => x.MatchLdarg(0),
-                x => x.MatchCall<RoR2.CharacterMaster>("get_playerCharacterMasterController"),
-                x => x.MatchCall<UnityEngine.Object>("op_Implicit"),
-                x => x.MatchBrfalse(out playerCharacterMasterControllerLabel)))
+                x => x.MatchCall<CharacterMaster>("get_inventory"),
+                x => x.MatchLdloca(1),
+                x => x.MatchCall<Inventory.ItemTransformation>(nameof(Inventory.ItemTransformation.TryTake)),
+                x => x.MatchBrfalse(out _))
+                &&
+                c.TryGotoNext(MoveType.Before,
+                x => x.MatchLdloca(5),
+                x => x.MatchLdarg(0),
+                x => x.MatchCall<CharacterMaster>("get_inventory"),
+                x => x.MatchLdloca(1),
+                x => x.MatchCall<Inventory.ItemTransformation>(nameof(Inventory.ItemTransformation.TryTake)),
+                x => x.MatchBrfalse(out ilLabel)))
             {
-                playerCharacterMasterControllerLabel.Target = reviveBeforeVanillaLabel.Target;
-            } else
-            {
-                Logger.LogError(iLContext.Method.Name + " redirecting playerCharacterMasterController IL Hook failed!");
-            }
-
-            // adding post vanilla revive handling
-            c = new ILCursor(iLContext);
-            ILLabel afterRevivesCheck = null;
-            if (c.TryGotoNext(MoveType.After,
-                    x => x.MatchLdarg(0),
-                    x => x.MatchLdstr("PlayExtraLifeVoidSFX"),
-                    x => x.MatchLdcR4(1f),
-                    x => x.MatchCall<MonoBehaviour>(nameof(MonoBehaviour.Invoke)),
-                    x => x.MatchBr(out _)
-                ))
-            {
-                afterRevivesCheck = c.DefineLabel();
-                afterRevivesCheck.Target = c.Emit(OpCodes.Ldarg_0).Prev;
+                Instruction instruction1 = ilLabel.Target;
+                c.GotoLabel(ilLabel, MoveType.Before);
+                ilLabel.Target = c.Emit(OpCodes.Ldarg_0).Prev;
+                c.EmitDelegate(CanReviveAfterVanilla);
+                c.Emit(OpCodes.Brfalse_S, instruction1);
+                c.Emit(OpCodes.Ldarg_0);
                 c.EmitDelegate(ReviveAfterVanilla);
-                c.Emit(OpCodes.Brtrue_S, afterVanillaRevivesLabel);
+                c.Emit(OpCodes.Brtrue_S, instruction);
             }
-            else
             {
-                Logger.LogError(iLContext.Method.Name + " after IL Hook failed!");
-            }
-
-            // replacing void extra life jump to our post vanilla revive handling
-            c = new ILCursor(iLContext);
-            ILLabel currentvoidbearTarget = null;
-            if (c.TryGotoNext(MoveType.After,
-                    x => x.MatchLdarg(0),
-                    x => x.MatchCall<RoR2.CharacterMaster>("get_inventory"),
-                    x => x.MatchLdsfld(typeof(RoR2.DLC1Content.Items), nameof(RoR2.DLC1Content.Items.ExtraLifeVoid)),
-                    x => x.MatchCallvirt<RoR2.Inventory>(nameof(RoR2.Inventory.GetItemCount)),
-                    x => x.MatchLdcI4(0),
-                    x => x.MatchBle(out currentvoidbearTarget)
-                    ))
-            {
-                currentvoidbearTarget.Target = afterRevivesCheck.Target;
-            } else
-            {
-                Logger.LogError(iLContext.Method.Name + " replacing void bear target IL Hook failed!");
+                Logger.LogError(iLContext.Method.Name + " IL hook 3 failed!");
             }
         }
 
-        private static bool CanReviveBeforeVanilla(CharacterMaster characterMaster)
-        {
-            return CanRevive(characterMaster, customRevives.Where(item => item.priority > 0).ToArray());
-        }
-
-        private static bool CanReviveAfterVanilla(CharacterMaster characterMaster)
-        {
-            return CanRevive(characterMaster, customRevives.Where(item => item.priority <= 0).ToArray());
-        }
-
+        private static bool CanReviveBeforeVanilla(CharacterMaster characterMaster) => CanRevive(characterMaster, customRevives.Where(item => item.priority > 0).ToArray());
+        private static bool CanReviveAfterVanilla(CharacterMaster characterMaster) => CanRevive(characterMaster, customRevives.Where(item => item.priority <= 0).ToArray());
         private static bool CanRevive(CharacterMaster characterMaster, CustomRevive[] customRevives)
         {
             foreach (CustomRevive customRevive in customRevives)
@@ -380,17 +344,8 @@ namespace ReviveAPI
             }
             return false;
         }
-
-        private static bool ReviveBeforeVanilla(CharacterMaster characterMaster)
-        {
-            return Revive(characterMaster, customRevives.Where(item => item.priority > 0).ToArray());
-        }
-
-        private static bool ReviveAfterVanilla(CharacterMaster characterMaster)
-        {
-            return Revive(characterMaster, customRevives.Where(item => item.priority <= 0).ToArray());
-        }
-
+        private static bool ReviveBeforeVanilla(CharacterMaster characterMaster) => Revive(characterMaster, customRevives.Where(item => item.priority > 0).ToArray());
+        private static bool ReviveAfterVanilla(CharacterMaster characterMaster) => Revive(characterMaster, customRevives.Where(item => item.priority <= 0).ToArray());
         private static bool Revive(CharacterMaster characterMaster, CustomRevive[] customRevives)
         {
             foreach (CustomRevive customRevive in customRevives)
@@ -418,7 +373,6 @@ namespace ReviveAPI
             }
             return false;
         }
-
         private static bool CanReviveAndOrRevive(CharacterMaster characterMaster, bool reverse, bool onRevive)
         {
             bool canRevive = reverse;
