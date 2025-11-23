@@ -27,16 +27,27 @@ namespace ReviveAPI
     {
         public const string ModGuid = "com.brynzananas.reviveapi";
         public const string ModName = "Revive API";
-        public const string ModVer = "1.2.2";
+        public const string ModVer = "1.3.0";
         public const bool ENABLE_TEST = false;
         public static ManualLogSource ManualLogger;
 
         public delegate bool CanReviveDelegate(CharacterMaster characterMaster);
+        public delegate bool CanReviveNewDelegate(CharacterMaster characterMaster, out CanReviveInfo canReviveInfo);
         public delegate void OnReviveDelegate(CharacterMaster characterMaster);
+        public delegate void OnReviveNewDelegate(CharacterMaster characterMaster, CanReviveInfo canReviveInfo);
+        public class CanReviveInfo
+        {
+            public Inventory.ItemTransformation.CanTakeResult canTakeResult;
+            internal CustomRevive customRevive;
+            internal bool revive;
+        }
         public class CustomRevive
         {
+            [Obsolete("Use canReviveNew instead")]
             public CanReviveDelegate canRevive;
+            public CanReviveNewDelegate canReviveNew;
             public OnReviveDelegate onRevive;
+            public OnReviveNewDelegate onReviveNew;
             public PendingOnRevive[] pendingOnRevives;
             public int priority;
         }
@@ -52,11 +63,11 @@ namespace ReviveAPI
         {
             ManualLogger = Logger;
             SetHooks();
-            if (ENABLE_TEST)
-            {
-                Logger.LogWarning("ReviveAPI TESTS ARE ENABLED!");
-                Tests.AddRevives();
-            }
+            //if (ENABLE_TEST)
+            //{
+            //    Logger.LogWarning("ReviveAPI TESTS ARE ENABLED!");
+            //    Tests.AddRevives();
+            //}
         }
 
         public void FixedUpdate()
@@ -116,9 +127,18 @@ namespace ReviveAPI
             IL.RoR2.CharacterMaster.IsDeadAndOutOfLivesServer += CharacterMaster_IsDeadAndOutOfLivesServer;
             IL.RoR2.CharacterMaster.OnBodyDeath += CharacterMaster_OnBodyDeath;
             On.RoR2.CharacterMaster.IsExtraLifePendingServer += CharacterMaster_IsExtraLifePendingServer;
+            RoR2Application.onLoadFinished += OnGameLoaded;
             hooksSet = true;
         }
 
+        private void OnGameLoaded()
+        {
+            if (ENABLE_TEST)
+            {
+                Logger.LogWarning("ReviveAPI TESTS ARE ENABLED!");
+                Tests.AddRevives();
+            }
+        }
 
         private void UnsetHooks()
         {
@@ -325,20 +345,24 @@ namespace ReviveAPI
                 c.EmitDelegate(ReviveAfterVanilla);
                 c.Emit(OpCodes.Brtrue_S, instruction);
             }
+            else
             {
                 Logger.LogError(iLContext.Method.Name + " IL hook 3 failed!");
             }
         }
-
         private static bool CanReviveBeforeVanilla(CharacterMaster characterMaster) => CanRevive(characterMaster, customRevives.Where(item => item.priority > 0).ToArray());
         private static bool CanReviveAfterVanilla(CharacterMaster characterMaster) => CanRevive(characterMaster, customRevives.Where(item => item.priority <= 0).ToArray());
+        private static CanReviveInfo canReviveInfoGlobal;
+        private static CustomRevive customReviveGlobal;
         private static bool CanRevive(CharacterMaster characterMaster, CustomRevive[] customRevives)
         {
             foreach (CustomRevive customRevive in customRevives)
             {
-                if (customRevive.canRevive == null) continue;
-                if (customRevive.canRevive.Invoke(characterMaster))
+                if (customRevive.canRevive != null && customRevive.canRevive.Invoke(characterMaster)) return true;
+                if (customRevive.canReviveNew != null && customRevive.canReviveNew.Invoke(characterMaster, out CanReviveInfo canReviveInfo))
                 {
+                    canReviveInfo.customRevive = customRevive;
+                    canReviveInfoGlobal = canReviveInfo;
                     return true;
                 }
             }
@@ -350,28 +374,33 @@ namespace ReviveAPI
         {
             foreach (CustomRevive customRevive in customRevives)
             {
-                if (customRevive.canRevive == null) continue;
-                if (customRevive.canRevive.Invoke(characterMaster))
+                if (customRevive.canRevive != null && customRevive.canRevive.Invoke(characterMaster))
                 {
                     customRevive.onRevive?.Invoke(characterMaster);
-                    if (customRevive.pendingOnRevives != null)
-                    {
-                        foreach (PendingOnRevive pendingOnRevive in customRevive.pendingOnRevives)
-                        {
-                            PendingOnRevive pendingOnRevive1 = new PendingOnRevive
-                            {
-                                timer = Mathf.Max(1f, pendingOnRevive.timer),
-                                characterMaster = characterMaster,
-                                onReviveDelegate = pendingOnRevive.onReviveDelegate
-                            };
-                            pendingRevives.Add(pendingOnRevive1);
-                        }
-                    }
-
+                    if (customRevive.pendingOnRevives != null) HandlePendingOnRevives(customRevive, characterMaster);
+                    return true;
+                }
+                if (customRevive.canReviveNew != null && customRevive.canReviveNew.Invoke(characterMaster, out canReviveInfoGlobal))
+                {
+                    customRevive.onReviveNew?.Invoke(characterMaster, canReviveInfoGlobal);
+                    if (customRevive.pendingOnRevives != null) HandlePendingOnRevives(customRevive, characterMaster);
                     return true;
                 }
             }
             return false;
+        }
+        private static void HandlePendingOnRevives(CustomRevive customRevive, CharacterMaster characterMaster)
+        {
+            foreach (PendingOnRevive pendingOnRevive in customRevive.pendingOnRevives)
+            {
+                PendingOnRevive pendingOnRevive1 = new PendingOnRevive
+                {
+                    timer = Mathf.Max(1f, pendingOnRevive.timer),
+                    characterMaster = characterMaster,
+                    onReviveDelegate = pendingOnRevive.onReviveDelegate
+                };
+                pendingRevives.Add(pendingOnRevive1);
+            }
         }
         private static bool CanReviveAndOrRevive(CharacterMaster characterMaster, bool reverse, bool onRevive)
         {
@@ -406,7 +435,142 @@ namespace ReviveAPI
             return canRevive;
         }
         #endregion
+        /// <summary>
+        /// Add custom revive
+        /// </summary>
+        /// <param name="canReviveNewDelegate">Revive condition.</param>
+        /// <param name="priority">Priority, values above zero run before vanilla, values below and equal to zero run after vanilla.</param>
+        public static void AddCustomRevive(CanReviveNewDelegate canReviveNewDelegate, int priority)
+        {
+            CustomRevive customRevive = new CustomRevive
+            {
+                canReviveNew = canReviveNewDelegate,
+                pendingOnRevives = defaultPendingOnRevives,
+                priority = priority
+            };
+            AddCustomRevive(customRevive);
+        }
 
+        /// <summary>
+        /// Add custom revive
+        /// </summary>
+        /// <param name="canReviveNewDelegate">Revive condition.</param>
+        /// <param name="onReviveNewDelegate">On revive action.</param>
+        /// <param name="priority">Priority, values above zero run before vanilla, values below and equal to zero run after vanilla.</param>
+        public static void AddCustomRevive(CanReviveNewDelegate canReviveNewDelegate, OnReviveNewDelegate onReviveNewDelegate, int priority)
+        {
+            CustomRevive customRevive = new CustomRevive
+            {
+                canReviveNew = canReviveNewDelegate,
+                onReviveNew = onReviveNewDelegate,
+                pendingOnRevives = null,
+                priority = priority
+            };
+            AddCustomRevive(customRevive);
+        }
+        /*
+        /// <summary>
+        /// Add custom revive
+        /// </summary>
+        /// <param name="canReviveDelegate">Revive condition.</param>
+        /// <param name="pendingOnRevives">On revive actions that will invoke on timer.</param>
+        /// <param name="priority">Priority, values above zero run before vanilla, values below and equal to zero run after vanilla.</param>
+        public static void AddCustomRevive(CanReviveDelegate canReviveDelegate, PendingOnRevive[] pendingOnRevives, int priority)
+        {
+            CustomRevive customRevive = new CustomRevive
+            {
+                canRevive = canReviveDelegate,
+                pendingOnRevives = pendingOnRevives,
+                priority = priority
+            };
+            AddCustomRevive(customRevive);
+        }
+        */
+
+        /// <summary>
+        /// Add custom revive
+        /// </summary>
+        /// <param name="canReviveNewDelegate">Revive condition.</param>
+        /// <param name="onReviveNewDelegate">On revive action.</param>
+        /// <param name="pendingOnRevives">On revive actions that will invoke on timer.</param>
+        /// <param name="priority">Priority, values above zero run before vanilla, values below and equal to zero run after vanilla.</param>
+        public static void AddCustomRevive(CanReviveNewDelegate canReviveNewDelegate, OnReviveNewDelegate onReviveNewDelegate, PendingOnRevive[] pendingOnRevives, int priority)
+        {
+            CustomRevive customRevive = new CustomRevive
+            {
+                canReviveNew = canReviveNewDelegate,
+                onReviveNew = onReviveNewDelegate,
+                pendingOnRevives = pendingOnRevives,
+                priority = priority
+            };
+            AddCustomRevive(customRevive);
+        }
+
+        /// <summary>
+        /// Add custom revive
+        /// </summary>
+        /// <param name="canReviveNewDelegate">Revive condition.</param>
+        public static void AddCustomRevive(CanReviveNewDelegate canReviveNewDelegate)
+        {
+            CustomRevive customRevive = new CustomRevive
+            {
+                canReviveNew = canReviveNewDelegate,
+                pendingOnRevives = defaultPendingOnRevives,
+                priority = -1
+            };
+            AddCustomRevive(customRevive);
+        }
+
+        /// <summary>
+        /// Add custom revive
+        /// </summary>
+        /// <param name="canReviveNewDelegate">Revive condition.</param>
+        /// <param name="onReviveNewDelegate">On revive action.</param>
+        public static void AddCustomRevive(CanReviveNewDelegate canReviveNewDelegate, OnReviveNewDelegate onReviveNewDelegate)
+        {
+            CustomRevive customRevive = new CustomRevive
+            {
+                canReviveNew = canReviveNewDelegate,
+                onReviveNew = onReviveNewDelegate,
+                pendingOnRevives = null,
+                priority = -1
+            };
+            AddCustomRevive(customRevive);
+        }
+
+        /// <summary>
+        /// Add custom revive
+        /// </summary>
+        /// <param name="canReviveNewDelegate">Revive condition.</param>
+        /// <param name="pendingOnRevives">On revive actions that will invoke on timer.</param>
+        public static void AddCustomRevive(CanReviveNewDelegate canReviveNewDelegate, PendingOnRevive[] pendingOnRevives)
+        {
+            CustomRevive customRevive = new CustomRevive
+            {
+                canReviveNew = canReviveNewDelegate,
+                pendingOnRevives = pendingOnRevives,
+                priority = -1
+            };
+            AddCustomRevive(customRevive);
+        }
+
+        /// <summary>
+        /// Add custom revive
+        /// </summary>
+        /// <param name="canReviveDelegate">Revive condition.</param>
+        /// <param name="onReviveDelegate">On revive action.</param>
+        /// <param name="pendingOnRevives">On revive actions that will invoke on timer.</param>
+        public static void AddCustomRevive(CanReviveNewDelegate canReviveNewDelegate, OnReviveNewDelegate onReviveNewDelegate, PendingOnRevive[] pendingOnRevives)
+        {
+            CustomRevive customRevive = new CustomRevive
+            {
+                canReviveNew = canReviveNewDelegate,
+                onReviveNew = onReviveNewDelegate,
+                pendingOnRevives = pendingOnRevives,
+                priority = -1
+            };
+            AddCustomRevive(customRevive);
+        }
         /// <summary>
         /// Add custom revive
         /// </summary>
@@ -449,7 +613,6 @@ namespace ReviveAPI
         /// <param name="priority">Priority, values above zero run before vanilla, values below and equal to zero run after vanilla.</param>
         public static void AddCustomRevive(CanReviveDelegate canReviveDelegate, PendingOnRevive[] pendingOnRevives, int priority)
         {
-            if (pendingOnRevives == null) pendingOnRevives = defaultPendingOnRevives;
             CustomRevive customRevive = new CustomRevive
             {
                 canRevive = canReviveDelegate,
@@ -468,7 +631,6 @@ namespace ReviveAPI
         /// <param name="priority">Priority, values above zero run before vanilla, values below and equal to zero run after vanilla.</param>
         public static void AddCustomRevive(CanReviveDelegate canReviveDelegate, OnReviveDelegate onReviveDelegate, PendingOnRevive[] pendingOnRevives, int priority)
         {
-            if (pendingOnRevives == null) pendingOnRevives = defaultPendingOnRevives;
             CustomRevive customRevive = new CustomRevive
             {
                 canRevive = canReviveDelegate,
@@ -518,7 +680,6 @@ namespace ReviveAPI
         /// <param name="pendingOnRevives">On revive actions that will invoke on timer.</param>
         public static void AddCustomRevive(CanReviveDelegate canReviveDelegate, PendingOnRevive[] pendingOnRevives)
         {
-            if (pendingOnRevives == null) pendingOnRevives = defaultPendingOnRevives;
             CustomRevive customRevive = new CustomRevive
             {
                 canRevive = canReviveDelegate,
@@ -536,7 +697,6 @@ namespace ReviveAPI
         /// <param name="pendingOnRevives">On revive actions that will invoke on timer.</param>
         public static void AddCustomRevive(CanReviveDelegate canReviveDelegate, OnReviveDelegate onReviveDelegate, PendingOnRevive[] pendingOnRevives)
         {
-            if (pendingOnRevives == null) pendingOnRevives = defaultPendingOnRevives;
             CustomRevive customRevive = new CustomRevive
             {
                 canRevive = canReviveDelegate,

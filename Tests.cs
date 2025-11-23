@@ -1,6 +1,8 @@
 ﻿using RoR2;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
+using static ReviveAPI.ReviveAPI;
+using static RoR2.Inventory.ItemTransformation;
 
 namespace ReviveAPI
 {
@@ -8,6 +10,10 @@ namespace ReviveAPI
     {
         public static void AddRevives()
         {
+            ReviveAPI.AddCustomRevive(CanReviveTest1, OnReviveTest1, null, 2);
+            ReviveAPI.AddCustomRevive(CanReviveTest2, OnReviveTest1, null, 1);
+            ReviveAPI.AddCustomRevive(CanReviveTest3, OnReviveTest1, null, 0);
+            /*
             ReviveAPI.AddCustomRevive(CanReviveSyringe, new ReviveAPI.PendingOnRevive[]
                 {
                     new ReviveAPI.PendingOnRevive
@@ -44,9 +50,79 @@ namespace ReviveAPI
                         timer = 2f,
                     }
                 },
-                -10);
+                -10);*/
         }
-
+        public static bool CanReviveTest1(CharacterMaster characterMaster, out CanReviveInfo canReviveInfo)
+        {
+            Inventory.ItemTransformation itemTransformation = default(Inventory.ItemTransformation);
+            itemTransformation.originalItemIndex = RoR2Content.Items.Syringe.itemIndex;
+            itemTransformation.newItemIndex = RoR2Content.Items.Medkit.itemIndex;
+            itemTransformation.transformationType = (ItemTransformationTypeIndex)0;
+            Inventory.ItemTransformation.CanTakeResult canTakeResult;
+            if (itemTransformation.CanTake(characterMaster.inventory, out canTakeResult))
+            {
+                canReviveInfo = new CanReviveInfo
+                {
+                    canTakeResult = canTakeResult,
+                    //itemTransformation = itemTransformation,
+                    revive = true,
+                };
+                return true;
+            }
+            canReviveInfo = null;
+            return false;
+        }
+        public static void OnReviveTest1(CharacterMaster characterMaster, CanReviveInfo canReviveInfo)
+        {
+            CharacterMaster.ExtraLifeServerBehavior extraLifeServerBehavior = characterMaster.gameObject.AddComponent<CharacterMaster.ExtraLifeServerBehavior>();
+            extraLifeServerBehavior.pendingTransformation = canReviveInfo.canTakeResult.PerformTake();
+            extraLifeServerBehavior.consumedItemIndex = RoR2Content.Items.Medkit.itemIndex;
+            extraLifeServerBehavior.completionTime = Run.FixedTimeStamp.now + 2f;
+            extraLifeServerBehavior.completionCallback = characterMaster.RespawnExtraLife;
+            extraLifeServerBehavior.completionTime -= 1f;
+            extraLifeServerBehavior.soundCallback = characterMaster.PlayExtraLifeSFX;
+            //canReviveInfo.itemTransformation.TryTransform(characterMaster.inventory, out _);
+        }
+        public static bool CanReviveTest2(CharacterMaster characterMaster, out CanReviveInfo canReviveInfo)
+        {
+            Inventory.ItemTransformation itemTransformation = default(Inventory.ItemTransformation);
+            itemTransformation.originalItemIndex = RoR2Content.Items.Mushroom.itemIndex;
+            itemTransformation.newItemIndex = RoR2Content.Items.Medkit.itemIndex;
+            itemTransformation.transformationType = (ItemTransformationTypeIndex)0;
+            Inventory.ItemTransformation.CanTakeResult canTakeResult;
+            if (itemTransformation.CanTake(characterMaster.inventory, out canTakeResult))
+            {
+                canReviveInfo = new CanReviveInfo
+                {
+                    canTakeResult = canTakeResult,
+                    //itemTransformation = itemTransformation,
+                    revive = true,
+                };
+                return true;
+            }
+            canReviveInfo = null;
+            return false;
+        }
+        public static bool CanReviveTest3(CharacterMaster characterMaster, out CanReviveInfo canReviveInfo)
+        {
+            Inventory.ItemTransformation itemTransformation = default(Inventory.ItemTransformation);
+            itemTransformation.originalItemIndex = RoR2Content.Items.IgniteOnKill.itemIndex;
+            itemTransformation.newItemIndex = RoR2Content.Items.Medkit.itemIndex;
+            itemTransformation.transformationType = (ItemTransformationTypeIndex)0;
+            Inventory.ItemTransformation.CanTakeResult canTakeResult;
+            if (itemTransformation.CanTake(characterMaster.inventory, out canTakeResult))
+            {
+                canReviveInfo = new CanReviveInfo
+                {
+                    canTakeResult = canTakeResult,
+                    //itemTransformation = itemTransformation,
+                    revive = true,
+                };
+                return true;
+            }
+            canReviveInfo = null;
+            return false;
+        }
         #region LowPriorityBeforeVanilla(Syringe)
         private static void ReviveWithEffectsSyringe(CharacterMaster master)
         {
