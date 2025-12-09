@@ -27,7 +27,7 @@ namespace ReviveAPI
     {
         public const string ModGuid = "com.brynzananas.reviveapi";
         public const string ModName = "Revive API";
-        public const string ModVer = "1.3.1";
+        public const string ModVer = "1.3.2";
         public const bool ENABLE_TEST = false;
         public static ManualLogSource ManualLogger;
 
