@@ -27,7 +27,7 @@ namespace ReviveAPI
     {
         public const string ModGuid = "com.brynzananas.reviveapi";
         public const string ModName = "Revive API";
-        public const string ModVer = "1.3.0";
+        public const string ModVer = "1.3.1";
         public const bool ENABLE_TEST = false;
         public static ManualLogSource ManualLogger;
 
@@ -38,8 +38,6 @@ namespace ReviveAPI
         public class CanReviveInfo
         {
             public Inventory.ItemTransformation.CanTakeResult canTakeResult;
-            internal CustomRevive customRevive;
-            internal bool revive;
         }
         public class CustomRevive
         {
@@ -125,10 +123,19 @@ namespace ReviveAPI
             IL.RoR2.Artifacts.TeamDeathArtifactManager.OnServerCharacterDeathGlobal += TeamDeathArtifactManager_OnServerCharacterDeathGlobal;
             IL.RoR2.Artifacts.DoppelgangerInvasionManager.OnCharacterDeathGlobal += DoppelgangerInvasionManager_OnCharacterDeathGlobal;
             IL.RoR2.CharacterMaster.IsDeadAndOutOfLivesServer += CharacterMaster_IsDeadAndOutOfLivesServer;
-            IL.RoR2.CharacterMaster.OnBodyDeath += CharacterMaster_OnBodyDeath;
+            //IL.RoR2.CharacterMaster.OnBodyDeath += CharacterMaster_OnBodyDeath;
             On.RoR2.CharacterMaster.IsExtraLifePendingServer += CharacterMaster_IsExtraLifePendingServer;
+            On.RoR2.CharacterMaster.TryReviveOnBodyDeath += CharacterMaster_TryReviveOnBodyDeath;
             RoR2Application.onLoadFinished += OnGameLoaded;
             hooksSet = true;
+        }
+
+        private bool CharacterMaster_TryReviveOnBodyDeath(On.RoR2.CharacterMaster.orig_TryReviveOnBodyDeath orig, CharacterMaster self, CharacterBody body)
+        {
+            if (CanReviveBeforeVanilla(self)) return ReviveBeforeVanilla(self);
+            bool flag = orig(self, body);
+            if (!flag && CanReviveAfterVanilla(self)) flag = ReviveAfterVanilla(self);
+            return flag;
         }
 
         private void OnGameLoaded()
@@ -146,8 +153,10 @@ namespace ReviveAPI
             IL.RoR2.Artifacts.TeamDeathArtifactManager.OnServerCharacterDeathGlobal -= TeamDeathArtifactManager_OnServerCharacterDeathGlobal;
             IL.RoR2.Artifacts.DoppelgangerInvasionManager.OnCharacterDeathGlobal -= DoppelgangerInvasionManager_OnCharacterDeathGlobal;
             IL.RoR2.CharacterMaster.IsDeadAndOutOfLivesServer -= CharacterMaster_IsDeadAndOutOfLivesServer;
-            IL.RoR2.CharacterMaster.OnBodyDeath -= CharacterMaster_OnBodyDeath;
+            //IL.RoR2.CharacterMaster.OnBodyDeath -= CharacterMaster_OnBodyDeath;
             On.RoR2.CharacterMaster.IsExtraLifePendingServer -= CharacterMaster_IsExtraLifePendingServer;
+            On.RoR2.CharacterMaster.TryReviveOnBodyDeath -= CharacterMaster_TryReviveOnBodyDeath;
+            RoR2Application.onLoadFinished -= OnGameLoaded;
             hooksSet = false;
         }
 
@@ -361,7 +370,6 @@ namespace ReviveAPI
                 if (customRevive.canRevive != null && customRevive.canRevive.Invoke(characterMaster)) return true;
                 if (customRevive.canReviveNew != null && customRevive.canReviveNew.Invoke(characterMaster, out CanReviveInfo canReviveInfo))
                 {
-                    canReviveInfo.customRevive = customRevive;
                     canReviveInfoGlobal = canReviveInfo;
                     return true;
                 }

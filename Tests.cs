@@ -64,8 +64,6 @@ namespace ReviveAPI
                 canReviveInfo = new CanReviveInfo
                 {
                     canTakeResult = canTakeResult,
-                    //itemTransformation = itemTransformation,
-                    revive = true,
                 };
                 return true;
             }
@@ -95,8 +93,6 @@ namespace ReviveAPI
                 canReviveInfo = new CanReviveInfo
                 {
                     canTakeResult = canTakeResult,
-                    //itemTransformation = itemTransformation,
-                    revive = true,
                 };
                 return true;
             }
@@ -115,8 +111,6 @@ namespace ReviveAPI
                 canReviveInfo = new CanReviveInfo
                 {
                     canTakeResult = canTakeResult,
-                    //itemTransformation = itemTransformation,
-                    revive = true,
                 };
                 return true;
             }
